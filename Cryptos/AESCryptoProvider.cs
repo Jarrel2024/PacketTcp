@@ -76,7 +76,7 @@ public class AESCryptoProvider : ICryptoProvider, IDisposable
         using var ms = new MemoryStream();
         using var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write);
         cs.Write(data, 0, data.Length);
-        cs.Close();
+        cs.FlushFinalBlock(); // 确保所有数据都被写入
         return ms.ToArray();
     }
 
@@ -85,10 +85,9 @@ public class AESCryptoProvider : ICryptoProvider, IDisposable
         using var decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
         using var ms = new MemoryStream(data);
         using var cs = new CryptoStream(ms, decryptor, CryptoStreamMode.Read);
-        byte[] buffer = new byte[data.Length];
-        int readCount = cs.Read(buffer, 0, buffer.Length);
-        Array.Resize(ref buffer, readCount);
-        return buffer;
+        using var resultStream = new MemoryStream();
+        cs.CopyTo(resultStream); // 确保完整读取解密后的数据
+        return resultStream.ToArray();
     }
 
     /// <summary>
