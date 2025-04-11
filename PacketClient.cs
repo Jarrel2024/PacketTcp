@@ -21,7 +21,7 @@ namespace PacketTcp;
 public class PacketClient(PacketManager manager,ILogger? logger = null)
 {
     private readonly Socket _socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-    private readonly Queue<PacketEvent> packetsNeedToSend = new();
+    private readonly Queue<PacketEvent> _packetsNeedToSend = new();
     private readonly Dictionary<Guid,Action<PacketEvent>> _callbacks = new();
     private Thread? _receiveThread;
     private Thread? _sendThread;
@@ -105,10 +105,10 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         byte[] data = manager.SerializePacket(packet,true);
         PacketEvent @event = new PacketEvent(packet.GetType(), packet, _client!);
         PacketSend?.Invoke(@event);
-        if (packetsNeedToSend.Count > manager.Option.MaxPacketCount) throw new InvalidOperationException("Packet queue is full.");
-        lock (packetsNeedToSend)
+        if (_packetsNeedToSend.Count > manager.Option.MaxPacketCount) throw new InvalidOperationException("Packet queue is full.");
+        lock (_packetsNeedToSend)
         {
-            packetsNeedToSend.Enqueue(@event);
+            _packetsNeedToSend.Enqueue(@event);
         }
         logger?.BeginScope($"Sending packet {packet.GetType().Name} to server.");
     }
@@ -192,14 +192,14 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         while (IsConnected)
         {
             PacketEvent @event;
-            if (packetsNeedToSend.Count == 0)
+            if (_packetsNeedToSend.Count == 0)
             {
                 Thread.Sleep(manager.Option.PacketWaitTime);
                 continue;
             }
-            lock (packetsNeedToSend)
+            lock (_packetsNeedToSend)
             {
-                @event = packetsNeedToSend.Dequeue();
+                @event = _packetsNeedToSend.Dequeue();
             }
             byte[] data = manager.SerializePacket(@event.Packet,true);
             _socket.Send(data);
@@ -214,6 +214,10 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         ClientDisconnected?.Invoke(_client!);
         _receiveThread = null;
         _sendThread = null;
+        lock(_packetsNeedToSend)
+        {
+            _packetsNeedToSend.Clear();
+        }
         _socket.Shutdown(SocketShutdown.Both);
         _socket.Close();
         _socket.Dispose();

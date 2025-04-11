@@ -11,10 +11,10 @@ using System.Runtime.CompilerServices;
 namespace PacketTcp;
 
 
-public class PacketServer(int port,PacketManager manager,ILogger? logger=null) : IDisposable
+public class PacketServer(int port,PacketManager manager,ILogger? logger=null)
 {
     private readonly Socket _socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-    private readonly HashSet<Task> clientTasks = [];
+    private readonly HashSet<Task> _clientTasks = [];
     private readonly Dictionary<Guid,Client> _clients = [];
     private readonly Dictionary<Socket, Client> _clientSockets = [];
     private readonly Dictionary<Guid, IHandler> _hanlders = [];
@@ -22,7 +22,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     private Thread? _sendThread;
     private bool _isListening = false;
 
-    private readonly Queue<PacketEvent> packetsNeedToSend = new();
+    private readonly Queue<PacketEvent> _packetsNeedToSend = new();
 
     public bool IsListening => _isListening;
     public HashSet<Client> Clients => _clients.Values.ToHashSet();
@@ -62,7 +62,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         _listenThread?.Join();
         _sendThread?.Join();
         Stop();
-        Task.WaitAll(clientTasks);
+        Task.WaitAll(_clientTasks);
     }
 
     /// <summary>
@@ -72,13 +72,13 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     /// <param name="packet"></param>
     public void Send(Client client,Packet packet)
     {
-        if (!IsListening) throw new InvalidOperationException("Server is not listening.");
+        if (!IsListening) return;
         PacketEvent @event = new PacketEvent(packet.GetType(), packet, client);
         PacketSend?.Invoke(@event);
-        if (packetsNeedToSend.Count > manager.Option.MaxPacketCountPerClient * _clients.Count) throw new InvalidOperationException("Packet queue is full.");
-        lock (packetsNeedToSend)
+        if (_packetsNeedToSend.Count > manager.Option.MaxPacketCountPerClient * _clients.Count) throw new InvalidOperationException("Packet queue is full.");
+        lock (_packetsNeedToSend)
         {
-            packetsNeedToSend.Enqueue(@event);
+            _packetsNeedToSend.Enqueue(@event);
         }
     }
 
@@ -116,12 +116,18 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
             _hanlders.Remove(guid);
         }
     }
-    private void Stop()
+    public void Stop()
     {
         if (!IsListening || _listenThread == null) return;
         _isListening = false;
         _listenThread = null;
-        _socket.Shutdown(SocketShutdown.Both);
+        _sendThread = null;
+
+        lock (_clientSockets) _clientSockets.Clear();
+        lock (_clients) _clients.Clear();
+        lock (_clientTasks) _clientTasks.Clear();
+        lock (_packetsNeedToSend) _packetsNeedToSend.Clear();
+
         _socket.Close();
         _socket.Dispose();
     }
@@ -144,32 +150,48 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
                     _clientSockets.Add(socket, client);
                 }
                 logger?.LogInformation("Client connected: {ClientId}", clientId);
-                clientTasks.Add(Task.Run(() => HandleClient(socket,clientId)));
+                _clientTasks.Add(Task.Run(() => HandleClient(socket,clientId)));
                 ClientConnected?.Invoke(client);
             }
             catch (SocketException ex)
             {
                 logger?.LogError("Socket exception: {Expection}", ex.Message);
             }
+            catch (ObjectDisposedException ex)
+            {
+                logger?.LogError("Socket disposed: {Expection}",ex.Message);
+                break;
+            }
         }
     }
     private void SendThread()
     {
-        while (IsListening)
+        try
         {
-            lock (packetsNeedToSend)
+            while (IsListening)
             {
-                while (packetsNeedToSend.Count > 0)
+                lock (_packetsNeedToSend)
                 {
-                    var packetEvent = packetsNeedToSend.Dequeue();
-                    if (packetEvent.IsCancelled) return;
-                    var client = packetEvent.Client;
-                    byte[] data = manager.SerializePacket(packetEvent.Packet,true);
-                    client.Socket.Send(data);
-                    PacketSent?.Invoke(packetEvent);
+                    while (_packetsNeedToSend.Count > 0)
+                    {
+                        var packetEvent = _packetsNeedToSend.Dequeue();
+                        if (packetEvent.IsCancelled) return;
+                        var client = packetEvent.Client;
+                        byte[] data = manager.SerializePacket(packetEvent.Packet, true);
+                        client.Socket.Send(data);
+                        PacketSent?.Invoke(packetEvent);
+                    }
                 }
+                Thread.Sleep(manager.Option.PacketWaitTime); // Prevent busy waiting
             }
-            Thread.Sleep(manager.Option.PacketWaitTime); // Prevent busy waiting
+        }
+        catch (ObjectDisposedException)
+        {
+
+        }
+        finally
+        {
+
         }
     }
     private void HandleClient(Socket socket,Guid clientId)
@@ -178,7 +200,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         BufferResolver resolver = new BufferResolver(ref buffer);
         try
         {
-            while (true)
+            while (IsListening)
             {
                 int bytesRead = socket.Receive(buffer);
                 if (bytesRead == 0) break; // Client disconnected
@@ -205,6 +227,10 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         catch (SocketException ex)
         {
             logger?.LogError("Socket exception: {Expection}", ex.Message);
+        }
+        catch (Exception other)
+        {
+            logger?.LogError("Exception: {Expection}", other.Message);
         }
         finally
         {
@@ -239,12 +265,5 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     public Client GetClient(Guid id)
     {
         return _clients[id];
-    }
-    public void Dispose()
-    {
-        _socket.Dispose();
-        _sendThread?.Join();
-        _listenThread?.Join();
-        this.Stop();
     }
 }
