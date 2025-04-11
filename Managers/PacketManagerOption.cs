@@ -1,6 +1,10 @@
-﻿using System;
+﻿using PacketTcp.Cryptos;
+using PacketTcp.Packets;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -9,7 +13,8 @@ namespace PacketTcp.Managers;
 /// <summary>
 /// PacketManagerOption is used to configure the packet manager.
 /// </summary>
-public class PacketManagerOption
+/// <param name="manager"></param>
+public class PacketManagerOption(PacketManager manager)
 {
     /// <summary>
     /// The maximum size of a packet in bytes.
@@ -34,7 +39,51 @@ public class PacketManagerOption
     /// <summary>
     /// Sync client id to clients.
     /// </summary>
-    public bool SyncClientId { get; set; } = true;
+    public bool SyncClientId { get => _syncClientId; 
+        set 
+        { 
+            _syncClientId = value;
+            if (SyncClientId)
+            {
+                manager.RegisterPacket<RequestClientIDC2SPacket>();
+                manager.RegisterPacket<RequestClientIDS2CPacket>();
+            }
+        } 
+    }
+    private bool _syncClientId = false;
+    /// <summary>
+    /// Auto register all packets in the assembly.
+    /// </summary>
+    public void MapPackets()
+    {
+        var types = AppDomain.CurrentDomain.GetAssemblies()
+            .SelectMany(a => a.GetTypes())
+            .Where(t => t.GetCustomAttribute<PacketAttribute>() != null);
+        foreach (Type type in types)
+        {
+            manager.RegisterPacket(type);
+        }
+    }
+    /// <summary>
+    /// Use RSA crypto for encrypt and decrypt data.
+    /// </summary>
+    public RSACryptoProvider UseRSACrypto()
+    {
+        var provider = new RSACryptoProvider();
+        CryptoProvider = provider;
+        return provider;
+    }
+    /// <summary>
+    /// Use AES crypto for encrypt and decrypt data.
+    /// </summary>
+    public AESCryptoProvider UseAESCrypto()
+    {
+        var provider = new AESCryptoProvider();
+        CryptoProvider = provider;
+        return provider;
+    }
+    internal bool UseCrypto => CryptoProvider != null;
+    public ICryptoProvider? CryptoProvider { get; set; } = null;
     public JsonSerializerOptions JsonSerializerOptions { get; set; } = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase, // 使用驼峰命名

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -15,7 +16,7 @@ namespace PacketTcp.Managers;
 /// </summary>
 public class PacketManager
 {
-    internal PacketManagerOption Option { get; set; } = new();
+    internal PacketManagerOption Option { get; set; }
     internal Dictionary<Guid,Type> Packets { get; set; } = new();
     internal Dictionary<Type, Guid> Ids { get; set; } = new();
 
@@ -25,14 +26,8 @@ public class PacketManager
     /// <param name="options">Options for server or client</param>
     public PacketManager(Action<PacketManagerOption>? options = null)
     {
-        if (options == null) return;
-        options.Invoke(Option);
-
-        if (Option.SyncClientId)
-        {
-            this.RegisterPacket<RequestClientIDC2SPacket>();
-            this.RegisterPacket<RequestClientIDS2CPacket>();
-        }
+        Option = new(this);
+        options?.Invoke(Option);
     }
     /// <summary>
     /// Register a packet type.
@@ -62,13 +57,14 @@ public class PacketManager
     /// <exception cref="InvalidCastException"></exception>
     public (Type PacketType,Packet Packet) DeserializePacket(byte[] data)
     {
+        if (Option.UseCrypto) data = Option.CryptoProvider!.Decrypt(data);
         using var ms = new MemoryStream(data);
         using var br = new BinaryReader(ms);
         Guid packetId = new Guid(br.ReadBytes(16));
         Guid guid = new Guid(br.ReadBytes(16));
         int length = br.ReadInt32();
         byte[] d = br.ReadBytes(length);
-        object obj = JsonSerializer.Deserialize(d, Packets[packetId])??throw new InvalidCastException();
+        object obj = JsonSerializer.Deserialize(d, Packets[packetId],Option.JsonSerializerOptions)??throw new InvalidCastException();
         Packet packet = (Packet)obj;
         packet.PakcetId = guid;
         return (Packets[packetId], packet);
@@ -98,24 +94,11 @@ public class PacketManager
         bw.Write(packetId.ToByteArray());
         if (packet.PakcetId == null) packet.PakcetId = Guid.NewGuid();
         bw.Write(packet.PakcetId.Value.ToByteArray());
-        string json = JsonSerializer.Serialize(packet,packet.GetType());
+        string json = JsonSerializer.Serialize(packet,packet.GetType(),Option.JsonSerializerOptions);
         byte[] data = Encoding.UTF8.GetBytes(json);
         bw.Write(data.Length);
         bw.Write(data);
+        if (Option.UseCrypto) return Option.CryptoProvider!.Encrypt(ms.ToArray());
         return ms.ToArray();
-    }
-
-    /// <summary>
-    /// Auto register all packets in the assembly.
-    /// </summary>
-    public void MapPackets()
-    {
-        var types = AppDomain.CurrentDomain.GetAssemblies()
-            .SelectMany(a => a.GetTypes())
-            .Where(t => t.GetCustomAttribute<PacketAttribute>() != null);
-        foreach (Type type in types)
-        {
-            RegisterPacket(type);
-        }
     }
 }

@@ -28,6 +28,10 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     public event PacketHandler? PacketReceived;
     public event PacketHandler? PacketSent;
     public event PacketHandler? PacketSend;
+    public event ClientHandler? ClientConnected;
+    public event ClientHandler? ClientDisconnected;
+
+    public Client Client { get=>_client??throw new InvalidOperationException("Client is not connected."); }
     /// <summary>
     /// Connect to server
     /// </summary>
@@ -38,17 +42,8 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     {
         if (IsConnected) throw new InvalidOperationException("Client is already connected.");
         _socket.Connect(ip, port);
-        _receiveThread = new Thread(ReceiveThread);
-        _sendThread = new Thread(SendThread);
-        _receiveThread.Start();
-        _sendThread.Start();
-
-        if (manager.Option.SyncClientId)
-        {
-            var res = SendAsync<RequestClientIDS2CPacket>(new RequestClientIDC2SPacket()).Result;
-            return _client = new Client { Id=res.ClientId,Socket=_socket,PacketClient=this };
-        }
-        return _client = new Client {Id=Guid.Empty,Socket=_socket,PacketClient=this };
+        StartConnect();
+        return Client;
     }
 
     /// <summary>
@@ -58,14 +53,42 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     /// <param name="port"></param>
     /// <exception cref="InvalidOperationException"></exception>
 
-    public async Task ConnectAsync(string ip, int port)
+    public async Task<Client> ConnectAsync(string ip, int port)
     {
         if (IsConnected) throw new InvalidOperationException("Client is already connected.");
         await _socket.ConnectAsync(ip, port);
+        StartConnect();
+        return Client;
+    }
+
+    private void StartConnect()
+    {
         _receiveThread = new Thread(ReceiveThread);
         _sendThread = new Thread(SendThread);
         _receiveThread.Start();
         _sendThread.Start();
+        if (manager.Option.SyncClientId)
+        {
+            var res = SendAsync<RequestClientIDS2CPacket>(new RequestClientIDC2SPacket()).Result;
+             _client = new Client { Id = res.ClientId, Socket = _socket, PacketClient = this };
+        }
+        else
+        {
+            _client = new Client { Id = Guid.Empty, Socket = _socket, PacketClient = this };
+        }
+        logger?.LogInformation($"Connected to server {(_client.Id == Guid.Empty ? "unknown" : _client.Id.ToString())}.");
+        ClientConnected?.Invoke(_client);
+    }
+
+    /// <summary>
+    /// Join the client and wait for it to finish.
+    /// </summary>
+
+    public void Join()
+    {
+        _receiveThread?.Join();
+        _sendThread?.Join();
+        Stop();
     }
 
     /// <summary>
@@ -84,6 +107,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         {
             packetsNeedToSend.Enqueue(@event);
         }
+        logger?.BeginScope($"Sending packet {packet.GetType().Name} to server.");
     }
 
     /// <summary>
@@ -99,6 +123,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         {
             _callbacks[packet.PakcetId!.Value] = @event=>callback=@event.Packet;
         }
+        logger?.LogInformation($"Waiting for packet {packet.GetType().Name} from server.");
         Task<Packet> task = Task.Run(() =>
         {
             while (callback == null)
@@ -107,6 +132,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
             }
             return callback;
         });
+        logger?.LogInformation($"Received packet {callback?.GetType().Name} from server.");
         return (T)await task;
     }
 
@@ -119,6 +145,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
                 byte[] buffer = new byte[manager.Option.MaxPacketSize];
                 int bytesRead = _socket.Receive(buffer);
                 if (bytesRead == 0) break;
+                logger?.LogInformation($"Received {bytesRead} bytes from server.");
                 var (packetType, packet) = manager.DeserializePacket(buffer[..bytesRead].ToArray());
                 PacketEvent @event = new PacketEvent(packetType, packet, _client!);
 
@@ -163,7 +190,10 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     public void Stop()
     {
         if (!IsConnected || _receiveThread == null) return;
+        logger?.LogInformation("Client disconnected.");
+        ClientDisconnected?.Invoke(_client!);
         _receiveThread = null;
+        _sendThread = null;
         _socket.Shutdown(SocketShutdown.Both);
         _socket.Close();
         _socket.Dispose();
