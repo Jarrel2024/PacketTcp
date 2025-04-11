@@ -16,5 +16,4 @@ public delegate void PacketHandler(PacketEvent packet);
 /// ClientHandler is used to handle a client.
 /// </summary>
 /// <param name="client"></param>
-/// <param name="id"></param>
-public delegate void ClientHandler(Socket client, Guid id);
+public delegate void ClientHandler(Client client);

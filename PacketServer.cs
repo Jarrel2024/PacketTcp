@@ -16,6 +16,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     private readonly Socket _socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
     private readonly HashSet<Task> clientTasks = [];
     private readonly Dictionary<Guid,Client> _clients = [];
+    private readonly Dictionary<Socket, Client> _clientSockets = [];
     private readonly Dictionary<Guid, IHandler> _hanlders = [];
     private Thread? _listenThread;
     private Thread? _sendThread;
@@ -40,7 +41,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         if(manager.Option.SyncClientId) this.AddPacketHanlder<RequestClientIDC2SPacket>((e, p) =>
         {
             var packet = new RequestClientIDS2CPacket();
-            packet.ClientId = GetID(e.Client);
+            packet.ClientId = e.Client.Id;
             e.SendCallback(packet);
         });
 
@@ -65,21 +66,11 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     }
 
     /// <summary>
-    /// Send a packet to a specific client.
+    /// Send a packet to specific socket.
     /// </summary>
     /// <param name="client"></param>
     /// <param name="packet"></param>
-    public void Send(Guid client, Packet packet)
-    {
-        this.Send(_clients[client].Socket, packet);
-    }
-    /// <summary>
-    /// Send a packet to a specific client.
-    /// </summary>
-    /// <param name="client"></param>
-    /// <param name="packet"></param>
-    /// <exception cref="InvalidOperationException"></exception>
-    public void Send(Socket client,Packet packet)
+    public void Send(Client client,Packet packet)
     {
         if (!IsListening) throw new InvalidOperationException("Server is not listening.");
         PacketEvent @event = new PacketEvent(packet.GetType(), packet, client);
@@ -89,6 +80,16 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         {
             packetsNeedToSend.Enqueue(@event);
         }
+    }
+
+    /// <summary>
+    /// Send a packet to a specific socket.
+    /// </summary>
+    /// <param name="client"></param>
+    /// <param name="packet"></param>
+    public void Send(Guid client, Packet packet)
+    {
+        this.Send(_clients[client], packet);
     }
 
     /// <summary>
@@ -131,15 +132,20 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         {
             try
             {
-                var client = _socket.Accept();
+                var socket = _socket.Accept();
                 Guid clientId = Guid.NewGuid();
+                Client client = new Client { Id = clientId, Socket = socket, PacketServer = this };
                 lock (_clients)
                 {
-                    _clients.Add(clientId,new Client { Id=clientId,Socket=client,PacketServer=this});
+                    _clients.Add(clientId,client);
+                }
+                lock (_clientSockets)
+                {
+                    _clientSockets.Add(socket, client);
                 }
                 logger?.LogInformation("Client connected: {ClientId}", clientId);
-                clientTasks.Add(Task.Run(() => HandleClient(client,clientId)));
-                ClientConnected?.Invoke(client, clientId);
+                clientTasks.Add(Task.Run(() => HandleClient(socket,clientId)));
+                ClientConnected?.Invoke(client);
             }
             catch (SocketException ex)
             {
@@ -159,24 +165,24 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
                     if (packetEvent.IsCancelled) return;
                     var client = packetEvent.Client;
                     byte[] data = manager.SerializePacket(packetEvent.Packet);
-                    client.Send(data);
+                    client.Socket.Send(data);
                     PacketSent?.Invoke(packetEvent);
                 }
             }
             Thread.Sleep(manager.Option.PacketWaitTime); // Prevent busy waiting
         }
     }
-    private void HandleClient(Socket client,Guid clientId)
+    private void HandleClient(Socket socket,Guid clientId)
     {
         byte[] buffer = new byte[manager.Option.MaxPacketSize];
         try
         {
             while (true)
             {
-                int bytesRead = client.Receive(buffer);
+                int bytesRead = socket.Receive(buffer);
                 if (bytesRead == 0) break; // Client disconnected
                 var packet = manager.DeserializePacket(buffer[..bytesRead]);
-                var packetEvent = new PacketEvent(packet.PacketType, packet.Packet, client)
+                var packetEvent = new PacketEvent(packet.PacketType, packet.Packet, _clientSockets[socket])
                 {
                     server = this
                 };
@@ -195,17 +201,21 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
         }
         finally
         {
+            ClientDisconnected?.Invoke(_clients[clientId]);
             lock (_clients)
             {
                 _clients.Remove(clientId);
             }
-            client.Close();
+            lock (_clientSockets)
+            {
+                _clientSockets.Remove(socket);
+            }
+            socket.Close();
             logger?.LogInformation("Client disconnected: {ClientId}", clientId);
-            ClientDisconnected?.Invoke(client, clientId);
         }
     }
     /// <summary>
-    /// Get the ID of the client.
+    /// Get the ID of the socket.
     /// </summary>
     /// <param name="client"></param>
     /// <returns></returns>
@@ -215,13 +225,13 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     }
 
     /// <summary>
-    /// Get the client by ID.
+    /// Get the socket by ID.
     /// </summary>
     /// <param name="id"></param>
     /// <returns></returns>
-    public Socket GetClient(Guid id)
+    public Client GetClient(Guid id)
     {
-        return _clients[id].Socket;
+        return _clients[id];
     }
     public void Dispose()
     {

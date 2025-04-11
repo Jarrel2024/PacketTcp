@@ -77,7 +77,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     {
         if (!IsConnected) throw new InvalidOperationException("Client is not connected.");
         byte[] data = manager.SerializePacket(packet);
-        PacketEvent @event = new PacketEvent(packet.GetType(), packet, _socket);
+        PacketEvent @event = new PacketEvent(packet.GetType(), packet, _client!);
         PacketSend?.Invoke(@event);
         if (packetsNeedToSend.Count > manager.Option.MaxPacketCount) throw new InvalidOperationException("Packet queue is full.");
         lock (packetsNeedToSend)
@@ -120,7 +120,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
                 int bytesRead = _socket.Receive(buffer);
                 if (bytesRead == 0) break;
                 var (packetType, packet) = manager.DeserializePacket(buffer[..bytesRead].ToArray());
-                PacketEvent @event = new PacketEvent(packetType, packet, _socket);
+                PacketEvent @event = new PacketEvent(packetType, packet, _client!);
 
                 if (_callbacks.TryGetValue(packet.PakcetId!.Value, out var action))
                 {
