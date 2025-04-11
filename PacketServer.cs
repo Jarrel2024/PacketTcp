@@ -43,7 +43,10 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null)
             e.SendCallback(packet);
         });
 
-        _socket.Bind(new IPEndPoint(IPAddress.Any, port));
+        _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        _socket.DualMode = true;
+        _socket.Bind(new IPEndPoint(IPAddress.IPv6Any, port));
+
         _socket.Listen(manager.Option.MaxClientCount);
         _listenThread = new Thread(ListenThread);
         _sendThread = new Thread(SendThread);

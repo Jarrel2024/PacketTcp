@@ -122,7 +122,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         {
             _callbacks[packet.PakcetId!.Value] = @event=>callback=@event.Packet;
         }
-        Task<Packet?> task = new Task<Packet?>(() =>
+        return (T?) await Task.Run(() =>
         {
             logger?.LogInformation("Waiting for packet {Name} id {ID} from server.",packet.GetType().Name,packet.PakcetId);
             var stopwatch = Stopwatch.StartNew();
@@ -151,7 +151,6 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
             }
             return callback;
         });
-        return (T?)await task;
     }
 
     private void ReceiveThread()
