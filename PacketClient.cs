@@ -71,7 +71,9 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         _sendThread.Start();
         if (manager.Option.SyncClientId)
         {
-            var res = SendAsync<RequestClientIDS2CPacket>(new RequestClientIDC2SPacket()).Result;
+            Task<RequestClientIDS2CPacket?> task = SendAsync<RequestClientIDS2CPacket>(new RequestClientIDC2SPacket());
+            task.Wait();
+            var res = task.Result;
             if (res == null) throw new Exception("Failed to get client id.");
             _client = new Client { Id = res.ClientId, Socket = _socket, PacketClient = this };
         }
@@ -126,10 +128,10 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         {
             _callbacks[packet.PakcetId!.Value] = @event=>callback=@event.Packet;
         }
-        logger?.LogInformation($"Waiting for packet {packet.GetType().Name} from server.");
-        Task<Packet?> task = Task.Run(() =>
+        Task<Packet?> task = new Task<Packet?>(() =>
         {
-            Stopwatch stopwatch = Stopwatch.StartNew();
+            logger?.LogInformation("Waiting for packet {Name} id {ID} from server.",packet.GetType().Name,packet.PakcetId);
+            var stopwatch = Stopwatch.StartNew();
             while (callback == null)
             {
                 Thread.Sleep(manager.Option.PacketWaitTime);
@@ -138,14 +140,23 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
                     logger?.BeginScope($"Timeout waiting for packet {packet.GetType().Name} from server.");
                     break;
                 }
+                if (IsConnected == false)
+                {
+                    logger?.BeginScope($"Client disconnected while waiting for packet {packet.GetType().Name} from server.");
+                    break;
+                }
             }
+            stopwatch.Stop();
             lock (_callbacks)
             {
                 _callbacks.Remove(packet.PakcetId!.Value);
             }
+            if (callback != null)
+            {
+                logger?.LogInformation($"Received packet {callback.GetType().Name} from server.");
+            }
             return callback;
         });
-        logger?.LogInformation($"Received packet {callback?.GetType().Name} from server.");
         return (T?)await task;
     }
 
@@ -157,7 +168,16 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         {
             while (IsConnected)
             {
-                int bytesRead = _socket.Receive(buffer);
+                int bytesRead = 0;
+                try
+                {
+                    bytesRead = _socket.Receive(buffer);
+                }
+                catch (SocketException ex)
+                {
+                    logger?.LogError("Socket exception: {Expection}", ex.Message);
+                    continue;
+                }
                 if (bytesRead == 0) break;
                 logger?.LogInformation($"Received {bytesRead} bytes from server.");
 
@@ -170,12 +190,17 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
 
                     if (_callbacks.TryGetValue(packet.PakcetId!.Value, out var action))
                     {
+                        logger?.BeginScope("Invoking callback for packet {Name} id {ID}.",packet.GetType().Name,packet.PakcetId);
                         action.Invoke(@event);
                     }
 
                     PacketReceived?.Invoke(@event);
                 }
             }
+        }
+        catch (ObjectDisposedException other)
+        {
+            logger?.LogError("Exception: {Expection}", other.Message);
         }
         finally
         {

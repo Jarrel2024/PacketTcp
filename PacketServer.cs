@@ -14,7 +14,7 @@ namespace PacketTcp;
 public class PacketServer(int port,PacketManager manager,ILogger? logger=null)
 {
     private readonly Socket _socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-    private readonly HashSet<Task> _clientTasks = [];
+    private readonly Dictionary<Guid,Task> _clientTasks = [];
     private readonly Dictionary<Guid,Client> _clients = [];
     private readonly Dictionary<Socket, Client> _clientSockets = [];
     private readonly Dictionary<Guid, IHandler> _hanlders = [];
@@ -62,7 +62,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null)
         _listenThread?.Join();
         _sendThread?.Join();
         Stop();
-        Task.WaitAll(_clientTasks);
+        Task.WaitAll(_clientTasks.Values);
     }
 
     /// <summary>
@@ -150,7 +150,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null)
                     _clientSockets.Add(socket, client);
                 }
                 logger?.LogInformation("Client connected: {ClientId}", clientId);
-                _clientTasks.Add(Task.Run(() => HandleClient(socket,clientId)));
+                _clientTasks.Add(clientId,Task.Run(() => HandleClient(socket,clientId)));
                 ClientConnected?.Invoke(client);
             }
             catch (SocketException ex)
@@ -242,6 +242,10 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null)
             lock (_clientSockets)
             {
                 _clientSockets.Remove(socket);
+            }
+            lock (_clientTasks)
+            {
+                _clientTasks.Remove(clientId);
             }
             socket.Close();
             logger?.LogInformation("Client disconnected: {ClientId}", clientId);
