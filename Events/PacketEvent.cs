@@ -1,11 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace PacketTcp.Events;
+﻿namespace PacketTcp.Events;
 public class PacketEvent(Type type,Packet packet,Client client) : ICancellable
 {
     internal PacketServer? server { get; set; }

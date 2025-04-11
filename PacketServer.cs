@@ -3,10 +3,8 @@ using PacketTcp.Events;
 using PacketTcp.Handler;
 using PacketTcp.Managers;
 using PacketTcp.Packets;
-using System.Diagnostics.Contracts;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 
 namespace PacketTcp;
 

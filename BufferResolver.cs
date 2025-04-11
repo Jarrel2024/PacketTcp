@@ -1,11 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace PacketTcp;
+﻿namespace PacketTcp;
 internal class BufferResolver(ref byte[] buffer)
 {
     private byte[] Buffer { get; } = buffer;
