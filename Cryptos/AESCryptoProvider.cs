@@ -29,7 +29,17 @@ public class AESCryptoProvider : ICryptoProvider, IDisposable
     /// <param name="salt">The salt value used to enhance security.</param>
     public void GenerateKeysFromPassword(string password, string salt)
     {
-        using var keyDerivation = new Rfc2898DeriveBytes(password, Encoding.UTF8.GetBytes(salt), 100000, HashAlgorithmName.SHA256);
+        GenerateKeysFromPassword(password, Encoding.UTF8.GetBytes(salt));
+    }
+
+    /// <summary>
+    /// Generates the encryption key and initialization vector (IV) using a user-provided password and salt.
+    /// </summary>
+    /// <param name="password">The password provided by the user.</param>
+    /// <param name="salt">The salt value used to enhance security.</param>
+    public void GenerateKeysFromPassword(string password, byte[] salt)
+    {
+        using var keyDerivation = new Rfc2898DeriveBytes(password,salt, 100000, HashAlgorithmName.SHA256);
         aes.Key = keyDerivation.GetBytes(32); // 256-bit key
         aes.IV = keyDerivation.GetBytes(16); // 128-bit IV
         Key = Convert.ToBase64String(aes.Key);
