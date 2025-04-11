@@ -5,7 +5,9 @@ using PacketTcp.Managers;
 using PacketTcp.Packets;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -70,7 +72,8 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
         if (manager.Option.SyncClientId)
         {
             var res = SendAsync<RequestClientIDS2CPacket>(new RequestClientIDC2SPacket()).Result;
-             _client = new Client { Id = res.ClientId, Socket = _socket, PacketClient = this };
+            if (res == null) throw new Exception("Failed to get client id.");
+            _client = new Client { Id = res.ClientId, Socket = _socket, PacketClient = this };
         }
         else
         {
@@ -115,7 +118,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     /// </summary>
     /// <param name="packet"></param>
     /// <returns></returns>
-    public async Task<T> SendAsync<T>(Packet packet) where T : Packet
+    public async Task<T?> SendAsync<T>(Packet packet,int timeout = -1) where T : Packet
     {
         Send(packet);
         Packet? callback = null;
@@ -124,37 +127,54 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
             _callbacks[packet.PakcetId!.Value] = @event=>callback=@event.Packet;
         }
         logger?.LogInformation($"Waiting for packet {packet.GetType().Name} from server.");
-        Task<Packet> task = Task.Run(() =>
+        Task<Packet?> task = Task.Run(() =>
         {
+            Stopwatch stopwatch = Stopwatch.StartNew();
             while (callback == null)
             {
                 Thread.Sleep(manager.Option.PacketWaitTime);
+                if (stopwatch.ElapsedMilliseconds > timeout && timeout > -1)
+                {
+                    logger?.BeginScope($"Timeout waiting for packet {packet.GetType().Name} from server.");
+                    break;
+                }
+            }
+            lock (_callbacks)
+            {
+                _callbacks.Remove(packet.PakcetId!.Value);
             }
             return callback;
         });
         logger?.LogInformation($"Received packet {callback?.GetType().Name} from server.");
-        return (T)await task;
+        return (T?)await task;
     }
 
     private void ReceiveThread()
     {
+        byte[] buffer = new byte[manager.Option.MaxPacketSize];
+        BufferResolver resolver = new BufferResolver(ref buffer);
         try
         {
             while (IsConnected)
             {
-                byte[] buffer = new byte[manager.Option.MaxPacketSize];
                 int bytesRead = _socket.Receive(buffer);
                 if (bytesRead == 0) break;
                 logger?.LogInformation($"Received {bytesRead} bytes from server.");
-                var (packetType, packet) = manager.DeserializePacket(buffer[..bytesRead].ToArray());
-                PacketEvent @event = new PacketEvent(packetType, packet, _client!);
 
-                if (_callbacks.TryGetValue(packet.PakcetId!.Value, out var action))
+                Queue<byte[]> packets = resolver.Resolve(bytesRead);
+
+                while (packets.Count > 0)
                 {
-                    action.Invoke(@event);
-                }
+                    var (packetType, packet) = manager.DeserializePacket(packets.Dequeue());
+                    PacketEvent @event = new PacketEvent(packetType, packet, _client!);
 
-                PacketReceived?.Invoke(@event);
+                    if (_callbacks.TryGetValue(packet.PakcetId!.Value, out var action))
+                    {
+                        action.Invoke(@event);
+                    }
+
+                    PacketReceived?.Invoke(@event);
+                }
             }
         }
         finally

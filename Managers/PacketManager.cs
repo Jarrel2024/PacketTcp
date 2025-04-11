@@ -90,15 +90,21 @@ public class PacketManager
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
-        Guid packetId = Ids[packet.GetType()];
-        bw.Write(packetId.ToByteArray());
+        Guid typeId = Ids[packet.GetType()];
         if (packet.PakcetId == null) packet.PakcetId = Guid.NewGuid();
-        bw.Write(packet.PakcetId.Value.ToByteArray());
         string json = JsonSerializer.Serialize(packet,packet.GetType(),Option.JsonSerializerOptions);
         byte[] data = Encoding.UTF8.GetBytes(json);
+
+        // Write the packet data
+        bw.Write(typeId.ToByteArray());
+        bw.Write(packet.PakcetId.Value.ToByteArray());
         bw.Write(data.Length);
         bw.Write(data);
-        if (Option.UseCrypto) return Option.CryptoProvider!.Encrypt(ms.ToArray());
-        return ms.ToArray();
+
+        // Encrypt the data if encryption is enabled
+        byte[] result = Option.UseCrypto ? Option.CryptoProvider!.Encrypt(ms.ToArray()) : ms.ToArray();
+
+        // Prepend the length of the result to the final buffer
+        return [.. BitConverter.GetBytes(result.Length), .. result];
     }
 }

@@ -175,23 +175,30 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
     private void HandleClient(Socket socket,Guid clientId)
     {
         byte[] buffer = new byte[manager.Option.MaxPacketSize];
+        BufferResolver resolver = new BufferResolver(ref buffer);
         try
         {
             while (true)
             {
                 int bytesRead = socket.Receive(buffer);
                 if (bytesRead == 0) break; // Client disconnected
-                var packet = manager.DeserializePacket(buffer[..bytesRead]);
-                var packetEvent = new PacketEvent(packet.PacketType, packet.Packet, _clientSockets[socket])
+
+                Queue<byte[]> packets = resolver.Resolve(bytesRead);
+
+                while(packets.Count>0)
                 {
-                    server = this
-                };
-                PacketReceived?.Invoke(packetEvent);
-                foreach (var handler in _hanlders)
-                {
-                    if (handler.Value is not PacketReceiveHanlder packetHandler) continue;
-                    if (packetHandler.PacketType != packetEvent.Type) continue;
-                    packetHandler.Handler.DynamicInvoke(packetEvent, packetEvent.Packet);
+                    var packet = manager.DeserializePacket(packets.Dequeue());
+                    var packetEvent = new PacketEvent(packet.PacketType, packet.Packet, _clientSockets[socket])
+                    {
+                        server = this
+                    };
+                    PacketReceived?.Invoke(packetEvent);
+                    foreach (var handler in _hanlders)
+                    {
+                        if (handler.Value is not PacketReceiveHanlder packetHandler) continue;
+                        if (packetHandler.PacketType != packetEvent.Type) continue;
+                        packetHandler.Handler.DynamicInvoke(packetEvent, packetEvent.Packet);
+                    }
                 }
             }
         }
