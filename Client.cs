@@ -17,7 +17,7 @@ public class Client
 
     public void Send(Packet packet)
     {
-        PacketServer?.Send(Socket, packet);
+        PacketServer?.Send(Id, packet);
         PacketClient?.Send(packet);
     }
 }
