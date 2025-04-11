@@ -102,7 +102,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
     public void Send(Packet packet)
     {
         if (!IsConnected) throw new InvalidOperationException("Client is not connected.");
-        byte[] data = manager.SerializePacket(packet);
+        byte[] data = manager.SerializePacket(packet,true);
         PacketEvent @event = new PacketEvent(packet.GetType(), packet, _client!);
         PacketSend?.Invoke(@event);
         if (packetsNeedToSend.Count > manager.Option.MaxPacketCount) throw new InvalidOperationException("Packet queue is full.");
@@ -201,7 +201,7 @@ public class PacketClient(PacketManager manager,ILogger? logger = null)
             {
                 @event = packetsNeedToSend.Dequeue();
             }
-            byte[] data = manager.SerializePacket(@event.Packet);
+            byte[] data = manager.SerializePacket(@event.Packet,true);
             _socket.Send(data);
             PacketSent?.Invoke(@event);
         }

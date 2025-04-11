@@ -164,7 +164,7 @@ public class PacketServer(int port,PacketManager manager,ILogger? logger=null) :
                     var packetEvent = packetsNeedToSend.Dequeue();
                     if (packetEvent.IsCancelled) return;
                     var client = packetEvent.Client;
-                    byte[] data = manager.SerializePacket(packetEvent.Packet);
+                    byte[] data = manager.SerializePacket(packetEvent.Packet,true);
                     client.Socket.Send(data);
                     PacketSent?.Invoke(packetEvent);
                 }

@@ -60,14 +60,14 @@ public class PacketManager
         if (Option.UseCrypto) data = Option.CryptoProvider!.Decrypt(data);
         using var ms = new MemoryStream(data);
         using var br = new BinaryReader(ms);
-        Guid packetId = new Guid(br.ReadBytes(16));
+        Guid typeId = new Guid(br.ReadBytes(16));
         Guid guid = new Guid(br.ReadBytes(16));
         int length = br.ReadInt32();
         byte[] d = br.ReadBytes(length);
-        object obj = JsonSerializer.Deserialize(d, Packets[packetId],Option.JsonSerializerOptions)??throw new InvalidCastException();
+        object obj = JsonSerializer.Deserialize(d, Packets[typeId],Option.JsonSerializerOptions)??throw new InvalidCastException();
         Packet packet = (Packet)obj;
         packet.PakcetId = guid;
-        return (Packets[packetId], packet);
+        return (Packets[typeId], packet);
     }
 
     /// <summary>
@@ -86,7 +86,7 @@ public class PacketManager
     /// </summary>
     /// <param name="packet"></param>
     /// <returns></returns>
-    public byte[] SerializePacket(Packet packet)
+    public byte[] SerializePacket(Packet packet,bool pending=false)
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
@@ -103,6 +103,7 @@ public class PacketManager
 
         // Encrypt the data if encryption is enabled
         byte[] result = Option.UseCrypto ? Option.CryptoProvider!.Encrypt(ms.ToArray()) : ms.ToArray();
+        if (!pending) return result;
 
         // Prepend the length of the result to the final buffer
         return [.. BitConverter.GetBytes(result.Length), .. result];
